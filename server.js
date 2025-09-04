@@ -68,13 +68,7 @@ app.use(express.json({
 app.use(helmet()); // secure headers
 app.use(hpp()); // prevent HTTP Parameter Pollution
 const origins = (CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin || origins.length === 0 || origins.includes(origin)) return cb(null, true);
-    return cb(new Error('CORS not allowed'), false);
-  },
-  credentials: true,
-}));
+app.use(cors());
 app.use(compression());
 app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
 
