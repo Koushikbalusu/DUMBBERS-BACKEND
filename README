@@ -1,0 +1,471 @@
+# Gymwear Backend API Documentation
+
+This document explains the complete backend API for the Gymwear production-grade server. It covers environment setup, database models, authentication, API endpoints, example requests/responses, and curl commands for frontend integration.
+
+---
+
+## Environment Setup
+
+### Dependencies
+- express
+- mongoose
+- bcryptjs
+- jsonwebtoken
+- express-async-handler
+- razorpay
+- crypto
+- dotenv
+
+Production extras:
+- helmet
+- cors
+- compression
+- morgan
+- hpp
+- express-rate-limit
+
+### Environment Variables
+
+| Variable               | Description                              | Required  |
+|------------------------|----------------------------------------|-----------|
+| NODE_ENV               | Environment mode (default: development)| No        |
+| PORT                   | Server port (default: 5000)             | No        |
+| MONGODB_URI            | MongoDB connection URI                  | Yes       |
+| JWT_SECRET             | JWT signing secret                      | Yes       |
+| CORS_ORIGINS           | Allowed CORS origins (comma-separated) | No        |
+| TRUST_PROXY            | Trust proxy? (default: true)            | No        |
+| RAZORPAY_KEY_ID        | Razorpay key ID                        | No*       |
+| RAZORPAY_KEY_SECRET    | Razorpay key secret                    | No*       |
+| RAZORPAY_WEBHOOK_SECRET| Razorpay webhook secret                | No*       |
+| ADMIN_EMAIL            | Admin email for seeding                | No        |
+| ADMIN_PASSWORD         | Admin password for seeding             | No        |
+| ADMIN_NAME             | Admin name (default: "Admin")          | No        |
+| ADMIN_MOBILE           | Admin mobile number (default: 9000000000)| No       |
+| DEFAULT_TAX_PERCENT    | Tax percent (e.g., 12 or 18 for GST)  | No        |
+| DEFAULT_SHIP_RUPEES    | Default shipping cost (rupees)         | No        |
+
+*Razorpay vars optional, payments enabled only if configured.
+
+---
+
+## Database Models
+
+### User
+- `name`: string, required
+- `email`: string, required, unique, lowercase
+- `mobilenum`: string, required
+- `password`: string, hashed, required (not returned in responses)
+- `role`: enum ['user', 'admin'], default 'user'
+- `addresses`: array of address objects
+- `wishlist`: array of ObjectId references to Product
+
+### Product
+- `name`: string, required
+- `slug`: string, required, unique
+- `description`: string
+- `brand`: string, default 'Generic'
+- `gender`: enum ['MEN', 'WOMEN', 'UNISEX'], default 'UNISEX'
+- `category`: enum [T_SHIRTS, BOTTOMS, VESTS, COMPRESSION_T_SHIRTS]
+- `tags`: string array
+- `attributes`: object with fit, sleeve, neck, material, pattern, stretch, climate, activity
+- `images`: array of URLs
+- `variants`: array of variant objects including size, color, sku, price, stock, images, dimensions
+- `ratingAverage`, `ratingCount`, `salesCount`, `isActive`
+
+### Review
+- Product and user references
+- Rating (1–5)
+- Title, body
+- Approved flag
+
+### Cart
+- One cart per user
+- Items array: product reference, variant ID, quantity, price snapshot
+
+### Order
+- User ref, items snapshot
+- Status (created, payment_pending, paid, fulfilled, cancelled, refunded, etc.)
+- Coupon details, subtotal, tax, shipping, amount (in paise)
+- Razorpay order/payment IDs and signature
+- Shipping and billing address copies
+
+### Coupon
+- Unique code
+- Discount percent
+- Active flag and validity times
+- Usage limits total/per user
+- Applicable/excluded categories
+
+### InventoryLog
+- Logs stock changes with reason and notes
+
+### Pincode
+- Shipping service info by postal code
+- COD availability, ETA days, shipping cost
+
+---
+
+## Enums (Meta Constants)
+
+| Enum          | Values                                         |
+|---------------|------------------------------------------------|
+| CATEGORY_ENUM | T_SHIRTS, BOTTOMS, VESTS, COMPRESSION_T_SHIRTS |
+| SIZE_ENUM     | XS, S, M, L, XL, XXL                           |
+| GENDER_ENUM   | MEN, WOMEN, UNISEX                             |
+| FIT_ENUM      | SLIM, REGULAR, RELAXED, COMPRESSION           |
+| SLEEVE_ENUM   | SLEEVELESS, SHORT, LONG                        |
+| NECK_ENUM     | CREW, V, POLO, SCOOP                           |
+| MATERIAL_ENUM | COTTON, POLYESTER, SPANDEX, NYLON, BLEND      |
+| PATTERN_ENUM  | SOLID, GRAPHIC, STRIPES, CAMOUFLAGE, COLORBLOCK, MESH |
+
+---
+
+## Authentication
+
+- JWT tokens signed with JWT_SECRET.
+- Use header: `Authorization: Bearer <token>` for authenticated routes.
+- `user`, `admin` roles.
+- Passwords hashed using bcrypt.
+
+---
+
+## API Endpoints and Usage
+
+### Health Check
+- `GET /health`  
+- Response example:
+```
+{
+  "success": true,
+  "message": "OK",
+  "data": { "uptime": 12345.67, "env": "development" }
+}
+```
+
+---
+
+### Authentication
+
+#### Register
+- `POST /api/auth/register`
+- Body:
+```
+{
+  "name": "John",
+  "email": "john@example.com",
+  "mobilenum": "9999999999",
+  "password": "pass123"
+}
+```
+- Response success:
+```
+{
+  "success": true,
+  "message": "Registered",
+  "data": {
+    "token": "<jwt>",
+    "user": { "name": "John", "email": "john@example.com", ... }
+  }
+}
+```
+- Example curl:
+```
+curl -X POST http://localhost:5000/api/auth/register \
+-H "Content-Type: application/json" \
+-d '{"name":"John","email":"john@example.com","mobilenum":"9999999999","password":"pass123"}'
+```
+
+#### Login
+- `POST /api/auth/login`
+- Body:
+```
+{
+  "email": "john@example.com",
+  "password": "pass123"
+}
+```
+- Response success:
+```
+{
+  "success": true,
+  "message": "Logged in",
+  "data": {
+    "token": "<jwt>",
+    "user": { "name": "John", "email": "john@example.com", ... }
+  }
+}
+```
+- Example curl:
+```
+curl -X POST http://localhost:5000/api/auth/login \
+-H "Content-Type: application/json" \
+-d '{"email":"john@example.com","password":"pass123"}'
+```
+
+#### Get Profile
+- `GET /api/auth/profile`  
+- Auth required (Bearer token)
+- Response includes user details (excluding password).
+
+#### Update Profile
+- `PUT /api/auth/profile`
+- Body can include `name` and/or `mobilenum`.
+
+#### Change Password
+- `POST /api/auth/change-password`
+- Body:
+```
+{
+  "currentPassword": "oldpass123",
+  "newPassword": "newpass456"
+}
+```
+
+---
+
+### User Addresses
+
+#### List Addresses
+- `GET /api/user/addresses`  
+- Auth required  
+- Response:
+```
+{
+  "success": true,
+  "message": "Addresses",
+  "data": { "addresses": [ ... ] }
+}
+```
+
+#### Add Address
+- `POST /api/user/addresses`
+- Body example:
+```
+{
+  "name": "Home",
+  "line1": "123 Main St",
+  "city": "CityName",
+  "state": "StateName",
+  "pincode": "123456",
+  "phone": "9999999999",
+  "isDefault": true
+}
+```
+
+#### Update Address
+- `PUT /api/user/addresses/:addrId`  
+- Body contains fields to update.
+
+#### Delete Address
+- `DELETE /api/user/addresses/:addrId`
+
+---
+
+### Wishlist
+
+#### Get Wishlist
+- `GET /api/wishlist` (auth)  
+- Response: list of product objects in wishlist.
+
+#### Add to Wishlist
+- `POST /api/wishlist/:productId`
+
+#### Remove from Wishlist
+- `DELETE /api/wishlist/:productId`
+
+---
+
+### Products
+
+#### List/Search Products
+- `GET /api/products`
+- Query params supported:
+  - `q` (text search)
+  - `category`, `gender`, `size`, `color`, `brand`, `fit`, `sleeve`, `neck`, `material`, `pattern`
+  - Price filters: `minPrice`, `maxPrice`
+  - `inStock`, `minRating`, `tags`, `onSale`
+  - Pagination: `page`, `limit`
+  - Sort by `price_asc`, `price_desc`, `newest`, `popularity`, `rating`, `sales`
+
+- Example request:
+```
+curl "http://localhost:5000/api/products?q=gym&category=T_SHIRTS&limit=5&page=1"
+```
+
+#### Get Product by ID
+- `GET /api/products/:id`
+
+#### Get Product by Slug
+- `GET /api/products/slug/:slug`
+
+#### Product Suggestions
+- `GET /api/products/suggest?q=term`
+
+---
+
+### Reviews
+
+#### Get Reviews for Product
+- `GET /api/products/:id/reviews`
+
+#### Add Product Review
+- `POST /api/products/:id/reviews` (auth)
+- Body:
+```
+{
+  "rating": 5,
+  "title": "Great product",
+  "body": "Really comfortable and fits well."
+}
+```
+
+---
+
+### Cart
+
+#### Get Cart
+- `GET /api/cart` (auth)
+
+#### Add or Update Item
+- `POST /api/cart` (auth)
+- Body:
+```
+{
+  "productId": "<product_id>",
+  "variantId": "<variant_id>",
+  "quantity": 2
+}
+```
+
+#### Remove Item
+- `DELETE /api/cart/item` (auth)
+- Body:
+```
+{
+  "productId": "<product_id>",
+  "variantId": "<variant_id>"
+}
+```
+
+#### Clear Cart
+- `DELETE /api/cart` (auth)
+
+---
+
+### Coupons
+
+#### Validate Coupon
+- `POST /api/coupons/validate` (auth)
+- Body:
+```
+{
+  "code": "DISCOUNT10",
+  "rupeesTotal": 1200,
+  "categoryHints": ["T_SHIRTS", "BOTTOMS"]
+}
+```
+
+---
+
+### Shipping
+
+#### Check Serviceability
+- `GET /api/shipping/serviceability?pincode=123456`
+- Response example:
+```
+{
+  "success": true,
+  "message": "Serviceability",
+  "data": {
+    "codAvailable": true,
+    "etaDays": 5,
+    "shippingRupees": 50
+  }
+}
+```
+
+---
+
+### Orders & Payments
+
+#### Create Order
+- `POST /api/orders` (auth)
+- Body:
+```
+{
+  "addressId": "<user_address_id>",
+  "couponCode": "DISCOUNT10" // optional
+}
+```
+
+#### List Orders
+- `GET /api/orders` (auth)
+- Query params: `page`, `limit`, `status`
+
+#### Create Razorpay Order
+- `POST /api/payments/create-order` (auth)
+- Body:
+```
+{
+  "orderId": "<order_mongodb_id>"
+}
+```
+- Response contains Razorpay order info including `razorpayOrderId`, amount, currency, receipt, and key ID.
+
+---
+
+## Security & Middleware
+
+- `helmet()` for secure HTTP headers.
+- `hpp()` to prevent HTTP Parameter Pollution.
+- `cors()` configured to allow only whitelisted origins.
+- `compression()` for gzip compression.
+- `morgan()` for HTTP request logging.
+- Rate limiters for general requests, auth endpoints, and webhook endpoints.
+
+---
+
+## Example Curl Commands
+
+### Register User
+```
+curl -X POST http://localhost:5000/api/auth/register \
+-H "Content-Type: application/json" \
+-d '{"name":"John Doe","email":"john@example.com","mobilenum":"9999999999","password":"pass123"}'
+```
+
+### Login User
+```
+curl -X POST http://localhost:5000/api/auth/login \
+-H "Content-Type: application/json" \
+-d '{"email":"john@example.com","password":"pass123"}'
+```
+
+### Fetch Products
+```
+curl "http://localhost:5000/api/products?q=T_SHIRTS&gender=MEN&limit=10"
+```
+
+### Add Product to Cart
+```
+curl -X POST http://localhost:5000/api/cart \
+-H "Authorization: Bearer <token>" \
+-H "Content-Type: application/json" \
+-d '{"productId":"<product_id>", "variantId":"<variant_id>", "quantity":2}'
+```
+
+### Create Order (Checkout)
+```
+curl -X POST http://localhost:5000/api/orders \
+-H "Authorization: Bearer <token>" \
+-H "Content-Type: application/json" \
+-d '{"addressId":"<address_id>", "couponCode":"DISCOUNT10"}'
+```
+
+### Create Razorpay Payment Order
+```
+curl -X POST http://localhost:5000/api/payments/create-order \
+-H "Authorization: Bearer <token>" \
+-H "Content-Type: application/json" \
+-d '{"orderId":"<order_id>"}'
+```
