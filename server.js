@@ -101,10 +101,10 @@ const fail = (res, message = 'Error', status = 400, data = {}) =>
 
 // ----- Enums & Constants -----
 const CATEGORY_ENUM = [
-  'T_SHIRTS',
-  'BOTTOMS',
-  'VESTS',
-  'COMPRESSION_T_SHIRTS'
+  'PANTS',
+  'BOXY_VESTS',
+  'COMPRESSION_T_SHIRTS',
+  'OVERSIZED_T_SHIRTS'
 ];
 
 const SIZE_ENUM = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
